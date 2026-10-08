@@ -3,6 +3,7 @@ package com.hyperstatusbar.ui
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -1806,6 +1807,7 @@ private fun logSnapshot(state: PrefsState, serviceReady: Boolean, context: Conte
 
 @Composable
 private fun AboutSection() {
+    val context = LocalContext.current
     SmallTitle(text = stringResource(R.string.section_about))
     SectionCard {
         BasicComponent(
@@ -1816,10 +1818,21 @@ private fun AboutSection() {
             title = stringResource(R.string.about_target_title),
             summary = stringResource(R.string.about_target),
         )
-        BasicComponent(
-            title = stringResource(R.string.about_license_title),
-            summary = stringResource(R.string.about_license),
-        )
+        Card(
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/zoulin3/HyperStatusBar")),
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            BasicComponent(
+                title = stringResource(R.string.about_license_title),
+                summary = stringResource(R.string.about_license),
+            )
+        }
     }
 }
 

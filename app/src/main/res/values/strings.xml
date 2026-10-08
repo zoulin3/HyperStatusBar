@@ -68,8 +68,8 @@
     <string name="about_version">版本 1.1.0</string>
     <string name="about_target_title">适配范围</string>
     <string name="about_target">HyperOS 3/4 · Android 16/17</string>
-    <string name="about_license_title">源码</string>
-    <string name="about_license">HyperStatusBar 项目源码</string>
+    <string name="about_license_title">项目源码</string>
+    <string name="about_license">github.com/zoulin3/HyperStatusBar</string>
 
     <string name="value_unknown">未知</string>
 
