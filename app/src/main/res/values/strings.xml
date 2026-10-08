@@ -1,0 +1,166 @@
+<resources>
+    <string name="app_name">HyperStatusBar</string>
+
+    <string name="tab_device">HyperStatusBar</string>
+    <string name="tab_home">首页</string>
+    <string name="tab_privacy">指示器</string>
+    <string name="tab_apps">应用</string>
+    <string name="tab_settings">设置</string>
+
+    <string name="back">返回</string>
+    <string name="section_types">隐私类型</string>
+    <string name="master_enable">启用模块</string>
+    <string name="master_enable_summary">总开关，关闭后所有拦截立即失效</string>
+    <string name="privacy_camera">摄像头</string>
+    <string name="privacy_camera_summary">隐藏相机被调用时的指示器</string>
+    <string name="privacy_mic">麦克风</string>
+    <string name="privacy_mic_summary">隐藏录音被调用时的指示器</string>
+    <string name="privacy_location">定位</string>
+    <string name="privacy_location_summary">隐藏定位被调用时的指示器</string>
+    <string name="privacy_media">投屏</string>
+    <string name="privacy_media_summary">隐藏屏幕共享与投屏的指示器</string>
+
+    <string name="filter_mode">应用范围</string>
+    <string name="filter_off">全部应用</string>
+    <string name="filter_blacklist">黑名单：列表内不隐藏</string>
+    <string name="filter_whitelist">白名单：仅列表内隐藏</string>
+    <string name="filter_per_app">仅按应用规则</string>
+    <string name="filter_mode_hint_per_app">仅隐藏已单独配置规则的应用及类型</string>
+
+    <string name="filter_mode_hint_whitelist">仅勾选的应用会隐藏指示器</string>
+    <string name="filter_mode_hint_blacklist">勾选的应用保持显示指示器</string>
+    <string name="filter_mode_hint_off">所有应用都会被隐藏指示器</string>
+    <string name="effect_hidden">隐藏</string>
+    <string name="effect_shown">显示</string>
+    <string name="show_system_apps">显示系统应用</string>
+    <string name="show_system_apps_summary">默认只列出有桌面入口的普通应用</string>
+    <string name="refresh_pull">下拉刷新</string>
+    <string name="refresh_release">松手刷新</string>
+    <string name="refresh_doing">正在读取…</string>
+    <string name="refresh_done">已更新</string>
+    <string name="search_apps">搜索应用或包名</string>
+    <string name="selected_count">已选 %1$d 个应用</string>
+    <string name="no_apps_found">没有匹配的应用</string>
+
+    <string name="section_theme">主题</string>
+    <string name="theme_mode">主题模式</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+    <string name="monet">Monet 取色</string>
+    <string name="monet_summary">跟随壁纸生成配色，仅 Android 12 以上生效</string>
+
+    <string name="section_layout">界面</string>
+    <string name="floating_bar">悬浮底栏</string>
+    <string name="floating_bar_summary">使用浮起的导航栏，关闭后为通栏样式</string>
+    <string name="liquid_glass">液态玻璃</string>
+    <string name="liquid_glass_summary">顶栏与底栏叠加实时模糊，需要 Android 13 以上的着色器支持</string>
+    <string name="predictive_back">预测性返回手势</string>
+    <string name="predictive_back_summary">返回时显示上一级页面并跟随手指滑动；关闭后使用普通返回</string>
+
+    <string name="section_actions">操作</string>
+    <string name="restart_systemui">重启 SystemUI</string>
+    <string name="restart_systemui_summary">需要 Root 权限；配置会在 SystemUI 重启后全部生效</string>
+    <string name="hide_launcher_icon">隐藏桌面图标</string>
+    <string name="hide_launcher_icon_summary">隐藏后仍可从 LSPosed 管理器进入设置</string>
+
+    <string name="section_about">关于</string>
+    <string name="about_version">版本 1.1.0</string>
+    <string name="about_target_title">适配范围</string>
+    <string name="about_target">HyperOS 3/4 · Android 16/17</string>
+    <string name="about_license_title">源码</string>
+    <string name="about_license">开源项目，基于 Miuix 与 KernelSU 组件</string>
+
+    <string name="value_unknown">未知</string>
+
+    <string name="status_active">已激活</string>
+    <string name="status_version">版本 1.1.0</string>
+    <string name="status_service_missing_title">未连接</string>
+    <string name="status_service_missing">未连接到 LSPosed，设置暂不可修改</string>
+    <string name="status_disabled">已停用</string>
+    <string name="status_disabled_summary">总开关已关闭，指示器不会被隐藏</string>
+    <string name="status_hook_ready">LSPosed API 102</string>
+    <string name="status_hook_pending">LSPosed API 102</string>
+
+
+    <string name="restart_systemui_done">已请求重启 SystemUI</string>
+    <string name="restart_systemui_failed">重启 SystemUI 失败，请确认已授予 Root 权限</string>
+
+    <string name="device_model">设备型号</string>
+    <string name="android_version">Android 版本</string>
+    <string name="cpu_arch">CPU 架构</string>
+    <string name="root_manager">Root 管理器</string>
+    <string name="storage_info">应用存储</string>
+
+    <string name="tab_status_bar">状态栏</string>
+
+    <string name="section_status_bar">状态栏管控</string>
+    <string name="sb_enable">启用状态栏管控</string>
+    <string name="sb_enable_summary">按应用隐藏状态栏的左侧通知区、右侧时钟区，或整条</string>
+    <string name="sb_mode">生效范围</string>
+    <string name="sb_mode_off">全部应用</string>
+    <string name="sb_mode_listed">白名单：仅列表内隐藏</string>
+    <string name="sb_mode_unlisted">黑名单：列表内不隐藏</string>
+    <string name="sb_default_mask">默认隐藏内容</string>
+    <string name="sb_default_mask_summary">没有单独设置规则的应用按这里执行</string>
+
+    <string name="sb_hide_none">不隐藏</string>
+    <string name="sb_hide_right">隐藏右区</string>
+    <string name="sb_hide_both">左右都隐藏</string>
+    <string name="sb_rule_default">默认</string>
+    <string name="sb_rule_none">不隐藏</string>
+    <string name="sb_hide_left">隐藏左区</string>
+
+    <string name="sb_engine_title">怎么做到的</string>
+    <string name="sb_engine_summary">本模块运行在 SystemUI 进程内，直接控制状态栏自己的视图，不依赖 Root、不写系统设置、不影响其它应用。</string>
+
+
+    <string name="section_indicator_apps">应用范围</string>
+    <string name="indicator_types_entry">指示器类型</string>
+    <string name="indicator_types_entry_summary">进入后分别设置摄像头、麦克风、定位和投屏</string>
+    <string name="back_to_indicator">返回指示器</string>
+    <string name="back_to_status_bar">返回状态栏</string>
+
+    <string name="sb_trigger_entry">触发条件</string>
+    <string name="sb_trigger_entry_summary">夜间、横屏、锁屏时自动隐藏指定区域</string>
+    <string name="sb_display_entry">显示项</string>
+    <string name="sb_display_entry_summary">时钟秒和电池百分比等显示偏好</string>
+
+    <string name="section_sb_trigger">触发条件</string>
+    <string name="sb_night">夜间时段</string>
+    <string name="sb_night_summary">到点自动隐藏，即使当前应用没有规则</string>
+    <string name="sb_night_start">开始时间（HH:mm）</string>
+    <string name="sb_night_end">结束时间（HH:mm）</string>
+    <string name="sb_landscape">横屏时</string>
+    <string name="sb_landscape_summary">设备转到横屏时隐藏</string>
+    <string name="sb_lockscreen">锁屏时</string>
+    <string name="sb_lockscreen_summary">锁屏界面隐藏</string>
+    <string name="sb_trigger_mask">触发时隐藏内容</string>
+    <string name="sb_trigger_mask_summary">命中上面任一条件时叠加的隐藏范围</string>
+
+
+    <string name="section_sb_display">显示项</string>
+    <string name="sb_clock_seconds">时钟显示秒</string>
+    <string name="sb_clock_seconds_summary">状态栏时钟精确到秒</string>
+    <string name="sb_hide_battery_percent">隐藏电池百分比</string>
+    <string name="sb_hide_battery_percent_summary">开启后强制关闭百分比；关闭则不改动系统设置</string>
+    <string name="sb_restore_title">会还原你的原设置</string>
+    <string name="sb_restore_summary">时钟秒、电池百分比、图标黑名单走的是系统设置键。开启前会先记下原值，关掉开关或停用模块时原样还回去，不留残留。</string>
+
+    <string name="section_sb_apps">应用规则</string>
+    <string name="sb_apps_hint_title">应用范围与单独规则</string>
+    <string name="sb_apps_hint">搜索应用后，可为每个应用选择默认、隐藏左区、隐藏右区或不隐藏；系统应用开关就在这里。</string>
+
+    <string name="restart_systemui_confirm">重启后状态栏与导航栏会短暂消失，配置随之全部生效。</string>
+    <string name="confirm">确定</string>
+    <string name="cancel">取消</string>
+
+    <string name="section_logs">日志</string>
+    <string name="send_log">发送日志</string>
+    <string name="send_log_summary">收集模块 Hook 日志与系统崩溃、重启记录，便于排查问题</string>
+    <string name="save_log">保存日志</string>
+    <string name="save_log_summary">选择目录后保存为 txt 文件</string>
+    <string name="log_collecting">正在收集日志…</string>
+    <string name="log_saved">日志已保存</string>
+    <string name="log_save_failed">保存日志失败</string>
+</resources>

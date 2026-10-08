@@ -1,0 +1,13 @@
+<resources>
+    <!--
+        父主题必须是 Light 系：Theme.Material（非 Light）自带黑色窗口背景，
+        冷启动时会先黑一帧，也就是之前那个"打开应用闪一下黑"。
+    -->
+    <style name="Theme.PrivacyDot" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:colorBackground">@color/window_background</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+</resources>

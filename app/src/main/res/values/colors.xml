@@ -1,0 +1,5 @@
+<resources>
+    <!-- 窗口底色：冷启动时第一帧到 Compose 首帧之间显示的就是它。
+         不设的话会透出父主题 Theme.Material 的黑色背景。 -->
+    <color name="window_background">#FFF7F7F7</color>
+</resources>

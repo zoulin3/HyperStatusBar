@@ -1,0 +1,20 @@
+# Gradle / 构建产物
+.gradle/
+.kotlin/
+build/
+*/build/
+app/build/
+app/release/
+# 本地环境
+local.properties
+# 签名文件与密钥
+*.jks
+*.keystore
+signing.properties
+# IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
