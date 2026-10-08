@@ -30,7 +30,14 @@
 - 一键重启 SystemUI
 - 一键导出日志
 
-界面素材来自 Miuix 与 KernelSU（均为 Apache-2.0）。
+## 致谢
+
+感谢以下开源项目提供的组件与实现参考：
+
+- [Miuix](https://github.com/compose-miuix-ui/miuix)
+- [KernelSU](https://github.com/tiann/KernelSU)
+
+HyperStatusBar 项目源码与上述项目相互独立，相关第三方组件遵循其各自许可证。
 
 ## 适配环境
 

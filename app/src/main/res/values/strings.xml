@@ -69,7 +69,7 @@
     <string name="about_target_title">适配范围</string>
     <string name="about_target">HyperOS 3/4 · Android 16/17</string>
     <string name="about_license_title">源码</string>
-    <string name="about_license">开源项目，基于 Miuix 与 KernelSU 组件</string>
+    <string name="about_license">HyperStatusBar 项目源码</string>
 
     <string name="value_unknown">未知</string>
 
