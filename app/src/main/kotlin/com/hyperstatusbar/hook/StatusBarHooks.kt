@@ -3,7 +3,9 @@ package com.hyperstatusbar.hook
 import android.app.ActivityManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
@@ -16,7 +18,6 @@ import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import java.lang.ref.WeakReference
 import java.lang.reflect.Field
-import java.lang.reflect.Proxy
 
 /**
  * 状态栏管控。
@@ -54,21 +55,47 @@ internal object StatusBarHooks {
 
     private const val BAR_CLASS = "com.android.systemui.statusbar.phone.MiuiPhoneStatusBarView"
 
+    /**
+     * SystemUI 自己那个任务栈监听器的实现类。
+     *
+     * 它是 `ITaskStackListener.Stub` 的子类，并且由 SystemUI 在 `addListener()` 里
+     * 用 `registerTaskStackListener(this)` 注册 —— 传的是真实 Binder，所以能被回调。
+     * 我们挂钩它的入口，就等于复用 SystemUI 已经建好的这条链路。
+     */
+    private const val TASK_LISTENER_IMPL = "com.android.systemui.shared.system.TaskStackChangeListeners\$Impl"
+
     // 显示项用的系统设置键：这几个是 MIUI 自己读取的位置，属于"用户偏好"，
     // 和每应用规则不同，仍然走设置键，但会记住原值并还原（见 applyDisplaySettings）。
     private const val KEY_CLOCK_SECONDS = "clock_seconds"
     private const val KEY_BATTERY_PERCENT = "status_bar_show_battery_percent"
 
-    /** 前台应用事件的兜底轮询间隔：只用来推动夜间时段这类与前台应用无关的条件。 */
+    /**
+     * 巡检间隔（事件正常时的兜底）。
+     *
+     * 前台应用变化走 [hookTaskStackEvents] 挂到的 SystemUI 任务栈回调，是实时的；
+     * 这个 ticker 只负责夜间时段 \/ 横屏 \/ 锁屏这类与前台应用无关的条件，
+     * 以及视图被 MIUI 重建后的一次兜底，因此间隔可以放到很大。
+     */
     private const val TICK_MS = 30_000L
 
+    /** 事件路径不可用时的降级巡检间隔：宁可贵一点，也不能让规则失效。 */
+    private const val FALLBACK_TICK_MS = 2_000L
+
     /** UsageStats 落盘有小延迟，事件到达后稍等再查，避免拿到上一个应用。 */
-    private const val EVENT_DELAY_MS = 120L
+    private const val EVENT_DELAY_MS = 150L
 
     /** UsageEvents.Event.ACTIVITY_RESUMED（API 29+）。 */
     private const val EVENT_ACTIVITY_RESUMED = 1
 
-    private const val FOREGROUND_WINDOW_MS = 10_000L
+    /** 任务栈事件里的包名只在这段时间内算"新鲜"；过期就重新查，避免一直用陈旧值。 */
+    private const val TASK_EVENT_TTL_MS = 3_000L
+
+    /** UsageStats 兜底窗口：够长才能覆盖"停在某个应用里很久"的情况。 */
+    private const val USAGE_WINDOW_MS = 300_000L
+
+    /** 取包名时依次尝试的 TaskInfo 字段；`topActivity` 被脱敏时还有别的可用。 */
+    private val taskComponentFields =
+        listOf("topActivity", "baseActivity", "origActivity", "realActivity")
 
     /** SystemUI 自己会 resume Activity，本模块的设置界面也不该被当成"当前应用"。 */
     private val ignoredPackages = setOf("com.android.systemui", "com.hyperstatusbar")
@@ -78,11 +105,9 @@ internal object StatusBarHooks {
     @Volatile
     private var appContext: Context? = null
 
+    /** SystemUI 任务栈事件是否已经挂上（决定用实时事件还是降级巡检）。 */
     @Volatile
-    private var taskListener: Any? = null
-
-    @Volatile
-    private var taskListenerReady = false
+    private var taskEventsReady = false
 
     // —— 状态栏视图引用（弱引用，避免拖住 Activity 的视图树） ——
 
@@ -95,10 +120,10 @@ internal object StatusBarHooks {
     /** 右区容器：信号 / WiFi / 电量。 */
     private var systemIconRef = WeakReference<View>(null)
 
-    /** 我们是否亲手把某个视图设成 GONE；只有自己改过的才负责还原。 */
-    private var leftHidden = false
-    private var notificationHidden = false
-    private var systemIconHidden = false
+    /** 我们亲手设成 GONE 的那个视图实例；只有自己改过的才负责还原（见 [setHidden]）。 */
+    private var leftHiddenRef: WeakReference<View>? = null
+    private var notificationHiddenRef: WeakReference<View>? = null
+    private var systemIconHiddenRef: WeakReference<View>? = null
 
     private var layoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
@@ -114,14 +139,37 @@ internal object StatusBarHooks {
     @Volatile
     private var taskForegroundPackage: String? = null
 
+    /** [taskForegroundPackage] 的时间戳，用来判断这个值还新不新鲜。 */
+    @Volatile
+    private var taskForegroundAt = 0L
+
+    /** 模块引用：日志写进 LSPosed 日志文件（SystemUI 的 Log 在部分 HyperOS 上看不到）。 */
+    @Volatile
+    private var moduleRef: XposedModule? = null
+
+    /** 上一次实际生效的隐藏位；只有它变化时才记一条日志。 */
+    @Volatile
+    private var lastLoggedMask = -1
+
     private val ticker = object : Runnable {
         override fun run() {
-            runCatching { recompute("ticker") }
+            // 判断依据是"事件是否真的来过"，而不是"hook 是否挂上了"：
+            // 挂上但收不到事件（厂商改动、监听器尚未注册）时也要能自动降级。
+            val eventsWorking = taskForegroundAt != 0L
+            if (!eventsWorking || hasTriggerConditions()) {
+                runCatching { recompute("ticker") }
+            }
             runCatching { applyZones() }
             runCatching { applyDisplaySettings() }
-            mainHandler.postDelayed(this, TICK_MS)
+            mainHandler.postDelayed(this, if (eventsWorking) TICK_MS else FALLBACK_TICK_MS)
         }
     }
+
+    /** 是否有"夜间 \/ 横屏 \/ 锁屏"这类需要靠 ticker 推动的全局条件。 */
+    private fun hasTriggerConditions(): Boolean =
+        Prefs.boolean(Prefs.Keys.SB_NIGHT) ||
+            Prefs.boolean(Prefs.Keys.SB_LANDSCAPE) ||
+            Prefs.boolean(Prefs.Keys.SB_LOCKSCREEN)
 
     /**
      * 安装。
@@ -129,6 +177,7 @@ internal object StatusBarHooks {
      * @return 成功建立的挂钩数量
      */
     fun install(module: XposedModule, classLoader: ClassLoader): Int {
+        moduleRef = module
         appContext = resolveContext()
         if (appContext == null) {
             info(module, "拿不到系统 Context，状态栏管控不生效")
@@ -136,7 +185,7 @@ internal object StatusBarHooks {
 
         var installed = 0
         installed += hookBarClass(module, classLoader)
-        if (registerTaskListener(module)) installed++
+        installed += hookTaskStackEvents(module, classLoader)
 
         // SystemUI 起来时状态栏还没 inflate，稍后再做首轮应用。
         mainHandler.postDelayed({
@@ -146,7 +195,7 @@ internal object StatusBarHooks {
         }, 4_000L)
         mainHandler.postDelayed(ticker, TICK_MS)
 
-        val source = if (taskListenerReady) "TaskStackListener 事件" else "定时轮询"
+        val source = if (taskEventsReady) "SystemUI 任务栈事件（实时）" else "降级巡检 ${FALLBACK_TICK_MS}ms"
         info(module, "状态栏管控已启动（前台应用来源：$source）")
         return installed
     }
@@ -271,53 +320,79 @@ internal object StatusBarHooks {
     // ------------------------------------------------------------ 前台应用事件
 
     /**
-     * 注册任务栈监听。
+     * 挂钩 SystemUI 自己的任务栈监听器。
      *
-     * 用反射代理实现 `ITaskStackListener` 而不是去 hook SystemUI 自己的
-     * `TaskStackChangeListeners`：我们只需要"任务栈变了"这个信号，
-     * 包名另外查更稳，也不必依赖那个类的内部结构。
+     * 早先的写法是用 `Proxy` 动态实现 `ITaskStackListener` 再注册到
+     * `ActivityTaskManager`，结果是**一次回调都收不到**：`registerTaskStackListener`
+     * 收到的是接口实例，system_server 要用 `asBinder()` 拿真实 Binder，而动态代理
+     * 生成的 `asBinder()` 返回 null，注册成功但永远不会被调用 —— 表现就是切换应用
+     * 之后要等下一次轮询才生效。
+     *
+     * 现在改成挂钩 SystemUI 自己的 `TaskStackChangeListeners$Impl`（`ITaskStackListener.Stub`
+     * 的真实子类）：事件由 binder 线程送到它的 `onTaskMovedToFront`，参数里就带着
+     * `RunningTaskInfo`，包名不用另外查，也没有任何轮询。
      */
-    private fun registerTaskListener(module: XposedModule): Boolean = runCatching {
-        val interfaceClass = Class.forName("android.app.ITaskStackListener")
-        val proxy = Proxy.newProxyInstance(
-            interfaceClass.classLoader,
-            arrayOf(interfaceClass),
-        ) { _, method, args ->
-            if (method.name == "onTaskMovedToFront") {
-                val task = args?.firstOrNull()
-                val pkg = task?.let { runningTaskPackage(it) }
-                if (pkg != null) {
-                    taskForegroundPackage = pkg
-                    lastForegroundPackage = pkg
-                    info(module, "前台应用切换: $pkg")
-                }
-            }
-            when (method.name) {
-                "onTaskMovedToFront",
-                "onTaskStackChanged",
-                "onTaskFocusChanged",
-                "onTaskCreated",
-                "onTaskRemoved",
-                -> scheduleRecompute()
-            }
-            defaultValue(method.returnType)
+    private fun hookTaskStackEvents(module: XposedModule, classLoader: ClassLoader): Int {
+        val implClass = runCatching { classLoader.loadClass(TASK_LISTENER_IMPL) }.getOrNull()
+        if (implClass == null) {
+            info(module, "未找到 $TASK_LISTENER_IMPL，前台应用只能靠巡检")
+            return 0
         }
-        taskListener = proxy
 
-        val service = Class.forName("android.app.ActivityTaskManager")
-            .getMethod("getService")
-            .invoke(null)
-            ?: error("ActivityTaskManager.getService() 返回 null")
-        service.javaClass
-            .getMethod("registerTaskStackListener", interfaceClass)
-            .invoke(service, proxy)
+        var installed = 0
 
-        taskListenerReady = true
-        true
-    }.getOrElse {
-        taskListenerReady = false
-        info(module, "注册 TaskStackListener 失败，退化为慢速巡检: ${it.javaClass.simpleName}: ${it.message}")
-        false
+        // 任务移到前台：参数里直接有包名，可以立刻重算并立刻应用，没有延迟。
+        runCatching {
+            val method = implClass.getDeclaredMethod(
+                "onTaskMovedToFront",
+                ActivityManager.RunningTaskInfo::class.java,
+            )
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    val pkg = chain.args.firstOrNull()?.let { taskPackageName(it) }
+                    runCatching { onForegroundChanged(pkg, "task-front") }
+                    return result
+                }
+            })
+            installed++
+        }
+
+        // 任务栈整体变化：没有包名，走一次带延迟的查询（合并连续事件）。
+        runCatching {
+            val method = implClass.getDeclaredMethod("onTaskStackChanged")
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    runCatching { scheduleRecompute() }
+                    return result
+                }
+            })
+            installed++
+        }
+
+        taskEventsReady = installed > 0
+        if (!taskEventsReady) info(module, "挂钩任务栈事件失败，前台应用只能靠巡检")
+        return installed
+    }
+
+    /**
+     * 前台应用变化的即时处理。
+     *
+     * 这个方法由 binder 线程调用，所以只更新 volatile 状态，视图操作一律 post 回主线程。
+     */
+    private fun onForegroundChanged(pkg: String?, source: String) {
+        if (pkg != null) {
+            taskForegroundPackage = pkg
+            taskForegroundAt = System.currentTimeMillis()
+            lastForegroundPackage = pkg
+        }
+        mainHandler.post {
+            runCatching { recompute(source) }
+            runCatching { applyZones() }
+        }
     }
 
     /**
@@ -350,14 +425,51 @@ internal object StatusBarHooks {
             return
         }
         val context = appContext
-        val packageName = taskForegroundPackage
-            ?: context?.let { foregroundPackage(it) }
-            ?: lastForegroundPackage
+        val mode = Prefs.string(Prefs.Keys.SB_MODE)
+        // 全局模式与前台应用无关，省掉每次巡检的 binder 查询。
+        val packageName = if (mode == Prefs.SB_MODE_PER_APP) resolveForegroundPackage() else null
         if (packageName != null) lastForegroundPackage = packageName
         val ruleMask = Prefs.statusBarRuleMask(packageName)
         val trigger = triggerMask(context)
         desiredMask = ruleMask or trigger
-        Log.i(TAG, "[StatusBarRule] source=$source mode=${Prefs.string(Prefs.Keys.SB_MODE)} pkg=${packageName ?: "<unknown>"} ruleMask=$ruleMask trigger=$trigger final=$desiredMask")
+        logState(source, mode, packageName, ruleMask, trigger)
+    }
+
+    /**
+     * 记录一次判定结果。
+     *
+     * 只在"实际生效的隐藏位"变化时才写，切到规则相同的应用不会产生任何日志；
+     * 不写共享配置，避免每次切换应用都做一次跨进程写入。
+     */
+    private fun logState(source: String, mode: String, packageName: String?, ruleMask: Int, trigger: Int) {
+        if (desiredMask == lastLoggedMask) return
+        lastLoggedMask = desiredMask
+        val text = "src=$source mode=$mode pkg=${packageName ?: "?"} rule=$ruleMask trig=$trigger final=$desiredMask"
+        runCatching { Log.i(TAG, "[StatusBarRule] $text") }
+        moduleRef?.let { module -> runCatching { module.log(Log.INFO, TAG, "[StatusBarRule] $text") } }
+    }
+
+    /**
+     * 前台应用包名。
+     *
+     * 三条来源按可靠性排序，第一个有结果的就用：
+     *
+     * 1. `ITaskStackListener.onTaskMovedToFront` 带过来的 TaskInfo（3 秒内新鲜才用）——
+     *    最及时，但 Android 14 起 `topActivity` 会按调用者权限脱敏，经常是 null；
+     * 2. `ActivityManager.getRunningTasks(1)` —— SystemUI 持有 REAL_GET_TASKS；
+     * 3. `UsageStatsManager.queryEvents` 里最近的 ACTIVITY_RESUMED —— 最稳，作兜底。
+     *
+     * 三条都失败时返回上一次的结果：宁可用旧值，也不要在切应用的一瞬间把规则丢掉，
+     * 否则状态栏会先显示出来、再藏回去。
+     */
+    private fun resolveForegroundPackage(): String? {
+        val now = System.currentTimeMillis()
+        taskForegroundPackage
+            ?.takeIf { now - taskForegroundAt <= TASK_EVENT_TTL_MS }
+            ?.let { return it }
+        runningTaskPackage()?.let { return it }
+        usageStatsPackage()?.let { return it }
+        return taskForegroundPackage ?: lastForegroundPackage
     }
 
     /** 触发条件：夜间时段 / 横屏 / 锁屏，命中时叠加"触发时隐藏内容"。 */
@@ -390,24 +502,37 @@ internal object StatusBarHooks {
         val hideLeft = (mask and Prefs.SB_LEFT) != 0
         val hideRight = (mask and Prefs.SB_RIGHT) != 0
 
-        setHidden(leftRef.get(), hideLeft, leftHidden) { leftHidden = it }
+        setHidden(leftRef.get(), hideLeft, leftHiddenRef) { leftHiddenRef = it }
         // 兜底：切换状态栏样式时 MIUI 会把通知图标容器临时挂到右区的
         // fullscreen_notification_icon_area 上，只藏左容器盖不住这种情况。
-        setHidden(notificationRef.get(), hideLeft, notificationHidden) { notificationHidden = it }
-        setHidden(systemIconRef.get(), hideRight, systemIconHidden) { systemIconHidden = it }
+        setHidden(notificationRef.get(), hideLeft, notificationHiddenRef) { notificationHiddenRef = it }
+        setHidden(systemIconRef.get(), hideRight, systemIconHiddenRef) { systemIconHiddenRef = it }
     }
 
-    private inline fun setHidden(view: View?, hide: Boolean, currentlyHidden: Boolean, update: (Boolean) -> Unit) {
+    /**
+     * 按需设置可见性。
+     *
+     * 记的是"我们亲手设成 GONE 的那个 View 实例"，而不是一个布尔标志：MIUI 重建
+     * 状态栏时会换出全新的 View 实例（默认 VISIBLE），只记布尔值的话新实例会被误判
+     * 成"已经藏好了"而不再隐藏 —— 这正是切换应用后隐藏失效的原因之一。
+     */
+    private inline fun setHidden(
+        view: View?,
+        hide: Boolean,
+        current: WeakReference<View>?,
+        update: (WeakReference<View>?) -> Unit,
+    ) {
         if (view == null) return
+        val marked = current?.get()
         if (hide) {
-            if (!currentlyHidden) {
+            if (marked !== view) {
                 view.visibility = View.GONE
-                update(true)
+                update(WeakReference(view))
             }
-        } else if (currentlyHidden) {
+        } else if (marked === view) {
             // 只还原我们自己藏起来的那个，避免把 MIUI 主动隐藏的视图点亮。
             view.visibility = View.VISIBLE
-            update(false)
+            update(null)
         }
     }
 
@@ -419,6 +544,10 @@ internal object StatusBarHooks {
     private var originalClockSeconds: Int? = null
     private var originalBatteryPercent: Int? = null
 
+    /** 已经写进系统设置的开关状态；只在它变化时才动 Settings，避免巡检时反复写。 */
+    private var appliedClockSeconds: Boolean? = null
+    private var appliedBatteryPercent: Boolean? = null
+
     private fun applyDisplaySettings() {
         val context = appContext ?: return
         if (!Prefs.boolean(Prefs.Keys.SB_ENABLE)) {
@@ -428,33 +557,42 @@ internal object StatusBarHooks {
         val resolver = context.contentResolver
 
         val clockSeconds = Prefs.boolean(Prefs.Keys.SB_CLOCK_SECONDS)
-        runCatching {
-            if (clockSeconds) {
-                if (originalClockSeconds == null) {
-                    originalClockSeconds = Settings.System.getInt(resolver, KEY_CLOCK_SECONDS, 0)
+        if (appliedClockSeconds != clockSeconds) {
+            appliedClockSeconds = clockSeconds
+            runCatching {
+                if (clockSeconds) {
+                    if (originalClockSeconds == null) {
+                        originalClockSeconds = Settings.System.getInt(resolver, KEY_CLOCK_SECONDS, 0)
+                    }
+                    putSystemInt(resolver, KEY_CLOCK_SECONDS, 1)
+                } else if (originalClockSeconds != null) {
+                    putSystemInt(resolver, KEY_CLOCK_SECONDS, originalClockSeconds ?: 0)
+                    originalClockSeconds = null
                 }
-                putSystemInt(resolver, KEY_CLOCK_SECONDS, 1)
-            } else if (originalClockSeconds != null) {
-                putSystemInt(resolver, KEY_CLOCK_SECONDS, originalClockSeconds ?: 0)
-                originalClockSeconds = null
             }
         }
 
         val hideBattery = Prefs.boolean(Prefs.Keys.SB_HIDE_BATTERY_PERCENT)
-        runCatching {
-            if (hideBattery) {
-                if (originalBatteryPercent == null) {
-                    originalBatteryPercent = Settings.System.getInt(resolver, KEY_BATTERY_PERCENT, 1)
+        if (appliedBatteryPercent != hideBattery) {
+            appliedBatteryPercent = hideBattery
+            runCatching {
+                if (hideBattery) {
+                    if (originalBatteryPercent == null) {
+                        originalBatteryPercent = Settings.System.getInt(resolver, KEY_BATTERY_PERCENT, 1)
+                    }
+                    putSystemInt(resolver, KEY_BATTERY_PERCENT, 0)
+                } else if (originalBatteryPercent != null) {
+                    putSystemInt(resolver, KEY_BATTERY_PERCENT, originalBatteryPercent ?: 1)
+                    originalBatteryPercent = null
                 }
-                putSystemInt(resolver, KEY_BATTERY_PERCENT, 0)
-            } else if (originalBatteryPercent != null) {
-                putSystemInt(resolver, KEY_BATTERY_PERCENT, originalBatteryPercent ?: 1)
-                originalBatteryPercent = null
             }
         }
     }
 
     private fun restoreDisplaySettings(context: Context) {
+        // 复位"已应用"标记：重新启用时要再写一次，否则会以为已经写过了。
+        appliedClockSeconds = null
+        appliedBatteryPercent = null
         val resolver = context.contentResolver
         runCatching {
             originalClockSeconds?.let {
@@ -478,47 +616,51 @@ internal object StatusBarHooks {
 
     // ------------------------------------------------------------------ 环境查询
 
-    /**
-     * 前台包名。
-     *
-     * SystemUI 持有 PACKAGE_USAGE_STATS，这条查询没有权限坑，
-     * 也不会因为某个 Android 版本改了 RunningTaskInfo 的字段名而失效。
-     */
-    private fun runningTaskPackage(task: Any): String? = runCatching {
-        val field = task.javaClass.getField("topActivity")
-        field.isAccessible = true
-        val component = field.get(task) as? android.content.ComponentName
-        component?.packageName?.takeUnless { it in ignoredPackages }
+    /** 从 TaskInfo 的公开字段里取包名；`topActivity` 被脱敏时还有 baseIntent 可用。 */
+    private fun taskPackageName(task: Any): String? {
+        for (name in taskComponentFields) {
+            val component = runCatching {
+                val field = task.javaClass.getField(name)
+                field.isAccessible = true
+                field.get(task) as? ComponentName
+            }.getOrNull() ?: continue
+            component.packageName?.takeUnless { it in ignoredPackages }?.let { return it }
+        }
+        val intent = runCatching {
+            val field = task.javaClass.getField("baseIntent")
+            field.isAccessible = true
+            field.get(task) as? Intent
+        }.getOrNull()
+        return intent?.component?.packageName?.takeUnless { it in ignoredPackages }
+    }
+
+    /** 当前任务栈顶部应用（SystemUI 持有 REAL_GET_TASKS）。 */
+    private fun runningTaskPackage(): String? = runCatching {
+        val context = appContext ?: return@runCatching null
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            ?: return@runCatching null
+        val task = manager.getRunningTasks(1).firstOrNull() ?: return@runCatching null
+        task.topActivity?.packageName?.takeUnless { it in ignoredPackages }
+            ?: task.baseActivity?.packageName?.takeUnless { it in ignoredPackages }
     }.getOrNull()
 
-    private fun foregroundPackage(context: Context): String? {
-        // 先取当前任务栈。UsageStats 是历史事件流，在 HyperOS 快速切换应用时可能落后。
-        val taskPackage = runCatching {
-            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-                ?: return@runCatching null
-            val name = manager.getRunningTasks(1).firstOrNull()?.topActivity?.packageName
-            name?.takeUnless { it in ignoredPackages }
-        }.getOrNull()
-        if (taskPackage != null) return taskPackage
-
-        // 当前任务栈不可读时，再退回 UsageStats 最近的 resumed 事件。
-        return runCatching {
-            val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return@runCatching null
-            val end = System.currentTimeMillis()
-            val events = manager.queryEvents(end - FOREGROUND_WINDOW_MS, end)
-                ?: return@runCatching null
-            val event = UsageEvents.Event()
-            var result: String? = null
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                if (event.eventType != EVENT_ACTIVITY_RESUMED) continue
-                val name = event.packageName ?: continue
-                if (name !in ignoredPackages) result = name
-            }
-            result
-        }.getOrNull()
-    }
+    /** UsageStats 里最近的 ACTIVITY_RESUMED。 */
+    private fun usageStatsPackage(): String? = runCatching {
+        val context = appContext ?: return@runCatching null
+        val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return@runCatching null
+        val end = System.currentTimeMillis()
+        val events = manager.queryEvents(end - USAGE_WINDOW_MS, end) ?: return@runCatching null
+        val event = UsageEvents.Event()
+        var result: String? = null
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.eventType != EVENT_ACTIVITY_RESUMED) continue
+            val name = event.packageName ?: continue
+            if (name !in ignoredPackages) result = name
+        }
+        result
+    }.getOrNull()
 
     private fun isLandscape(context: Context?): Boolean =
         context?.resources?.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE
